@@ -1,0 +1,9 @@
+temp
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+buids/
+volume
+.idea/
+.venv/
+.env/
