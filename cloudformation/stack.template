@@ -9,11 +9,107 @@ Parameters:
     ConstraintDescription: Name must begin and end with a letter or number and consist only of lowercase letters, numbers, and hyphens (-).
 
 Resources:
+  # KMS S3 encryption key
+  s3Key:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-s3
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ''
+                - - 'arn:aws:iam::'
+                  - !Ref 'AWS::AccountId'
+                  - ':root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow VPC Flow Logs to use the key as well
+            Effect: Allow
+            Principal:
+              Service:
+                - delivery.logs.amazonaws.com
+            Action: 'kms:GenerateDataKey*'
+            Resource: '*'
+  s3KeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/s3
+      TargetKeyId:
+        Ref: s3Key
+
   S3Bucket:
     Type: AWS::S3::Bucket
     Properties: 
-      BucketName: !Sub ${BucketName}-s3
+      BucketName: !Sub ${BucketName}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:${s3KeyAlias}'
+              SSEAlgorithm: 'aws:kms'
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LoggingBucket
+        LogFilePrefix: testing-logs
 
+  S3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 's3:*'
+            Effect: Deny
+            Resource:
+              - !Sub 'arn:aws:s3:::${BucketName}'
+              - !Sub 'arn:aws:s3:::${BucketName}/*'
+            Condition:
+              StringNotEquals:
+                'aws:SourceVpce': vpce-1a2b3c4d
+
+  LoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "This is a log bucket, it does not require access logging to another log bucket"
+    Properties:
+      BucketName: swisscom-logging-bucket
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:${s3KeyAlias}'
+              SSEAlgorithm: 'aws:kms'
+
+  LoggingBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref LoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 's3:PutObject'
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref LoggingBucket
+                - /*
+            Condition:
+              ArnLike:
+                'aws:SourceArn':
+                  - !GetAtt S3Bucket.Arn
+              StringEquals:
+                'aws:SourceAccount': !Sub '${AWS::AccountId}'
 Outputs:
   BucketARN:
     Description: The arn for the bucket that got created
