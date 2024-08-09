@@ -2,7 +2,7 @@ temp
 .terraform/
 terraform.tfstate
 terraform.tfstate.backup
-buids/
+builds/
 volume
 .idea/
 .venv/

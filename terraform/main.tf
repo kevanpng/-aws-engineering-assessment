@@ -7,28 +7,64 @@ locals {
   region      = "eu-central-1"
 }
 
-module "s3_bucket" {
-  source = "terraform-aws-modules/s3-bucket/aws"
+resource "aws_kms_key" "s3_kms" {
+  description             = "KMS key is used to encrypt bucket objects"
+  deletion_window_in_days = 7
+}
 
-  bucket        = local.bucket_name
-  force_destroy = true
-  acl    = "private"
-  control_object_ownership = true
-  object_ownership         = "BucketOwnerEnforced"
+module "s3_bucket" {
+  source                                   = "terraform-aws-modules/s3-bucket/aws"
+  bucket                                   = local.bucket_name
+  force_destroy                            = true
+  acl                                      = "private"
+  control_object_ownership                 = true
+  object_ownership                         = "BucketOwnerEnforced"
+
+  # Bucket policies
+  attach_policy                            = true
+  attach_deny_insecure_transport_policy    = true
+  attach_require_latest_tls_policy         = true
+  attach_deny_incorrect_encryption_headers = true
+  attach_deny_incorrect_kms_key_sse        = true
+  allowed_kms_key_arn                      = aws_kms_key.s3_kms.arn
+  attach_deny_unencrypted_object_uploads   = true
+
+  # S3 bucket-level Public Access Block configuration (by default now AWS has made this default as true for S3 bucket-level block public access)
+  block_public_acls                        = true
+  block_public_policy                      = true
+  ignore_public_acls                       = true
+  restrict_public_buckets                  = true
+
   versioning = {
     enabled = true
+  }
+
+  server_side_encryption_configuration = {
+    rule = {
+      apply_server_side_encryption_by_default = {
+        kms_master_key_id = aws_kms_key.s3_kms.arn
+        sse_algorithm     = "aws:kms"
+      }
+    }
+  }
+
+  tags = {
+    Environment = "dev"
   }
 }
 
 module "lambda_function1" {
-  source  = "terraform-aws-modules/lambda/aws"
-  version = "~> 3.0"
+  source        = "terraform-aws-modules/lambda/aws"
+  version       = "~> 3.0"
 
   function_name = "${local.company}-lambda1"
   handler       = "index.lambda_handler"
   runtime       = "python3.8"
+  source_path   = "./lambda"
 
-  source_path = "./lambda"
+  tags = {
+    Environment = "dev"
+  }
 }
 
 module "step_function" {
@@ -37,7 +73,7 @@ module "step_function" {
   name       = "${local.company}-sfn"
   definition = <<EOF
 {
-  "Comment":"A Hello World example of the Amazon States Language using Pass states",
+  "Comment":"Put s3 object metadata into DDB",
   "StartAt":"Put Message Into DynamoDB",
   "States":{
     "Put Message Into DynamoDB":{
@@ -73,7 +109,7 @@ EOF
     }
   }
   tags = {
-    Module = "my"
+    Environment = "dev"
   }
 }
 
